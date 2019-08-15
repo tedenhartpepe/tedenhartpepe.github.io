@@ -1,0 +1,37 @@
+---
+layout: post
+title: "Terra Launches!"
+date: 2019-08-15
+---
+
+Logistics: This website is for hosting academic work samples in HTML format. 
+It is powered by [Jekyll](http://jekyllrb.com); I'll use Markdown to author my posts.
+
+Today's Thoughts: "The best analysts are lightning-fast coders who can surf vast datasets quickly, encountering and surfacing potential insights 
+faster than those other specialists can say “whiteboard.” Their semi-sloppy coding style baffles traditional software engineers 
+— but leaves them in the dust. Speed is their highest virtue, closely followed by the ability to identify potentially useful 
+gems. A mastery of visual presentation of information helps, too: beautiful and effective plots allow the mind to extract 
+information faster, which pays off in time-to-potential-insights.
+
+
+The result is that the business gets a finger on its pulse and eyes on previously-unknown unknowns. This generates the 
+inspiration that helps decision-makers select valuable quests to send statisticians and ML engineers on, saving them from 
+mathematically-impressive excavations of useless rabbit holes.
+
+Sloppy nonsense or stellar storytelling?
+“But,” object the statisticians, “most of their so-called insights are nonsense.” By that they mean the results of their 
+exploration may reflect only noise. Perhaps, but there’s more to the story.Analysts are data storytellers. Their mandate 
+is to summarize interesting facts and to use data for inspiration. In some organizations those facts and that inspiration 
+become input for human decision-makers. But in more sophisticated data operations, data-driven inspiration gets flagged for 
+proper statistical follow-up.
+
+Good analysts have unwavering respect for the one golden rule of their profession: do not come to conclusions beyond the data 
+(and prevent your audience from doing it, too). To this end, one way to spot a good analyst is that they use softened, hedging 
+language. For example, not “we conclude” but “we are inspired to wonder”. They also discourage leaders’ overconfidence by 
+emphasizing a multitude of possible interpretations for every insight.
+
+As long as analysts stick to the facts — saying only “This is what is here.” — and don’t take themselves too seriously, the 
+worst crime they could commit is wasting someone’s time when they run it by them."
+
+- From The Harvard Business Review, "What Great Data Analysts Do — and Why Every Organization Needs Them," Cassie Kozyrkov,
+DECEMBER 04, 2018.
