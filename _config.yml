@@ -1,2 +1,11 @@
 name: Terra R. Edenhart-Pepe
 markdown: kramdown
+
+plugins:
+  - jekyll-relative-links
+relative_links:
+  enabled: true
+  collections: true
+include:
+#  - CONTRIBUTING.md
+ 
