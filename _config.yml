@@ -8,6 +8,6 @@ relative_links:
   collections: true
 include:
   - R_Markdown_Midterm_Final 2.html
-  -CPLNMarkdown.html
-  -Betz_Pepe_Final.html
+  - CPLNMarkdown.html
+  - Betz_Pepe_Final.html
  
