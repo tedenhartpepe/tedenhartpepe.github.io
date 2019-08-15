@@ -7,5 +7,7 @@ relative_links:
   enabled: true
   collections: true
 include:
-#  - CONTRIBUTING.md
+  - R_Markdown_Midterm_Final 2.html
+  -CPLNMarkdown.html
+  -Betz_Pepe_Final.html
  
