@@ -1,0 +1,372 @@
+---
+title: "Final_RFS"
+author: "TREP_SB"
+date: "12/14/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown for THE RANDOM FOREST SERVICE'S MUSA 507 FINAL PROJECT
+
+```{r setup, echo=FALSE}
+setwd("~/Dropbox/MUSA-MIDTERM/Final Project")
+
+Sys.setenv(PATH = paste(Sys.getenv("PATH"), "*InstallDirectory*/Rtools/bin/",
+                        "*InstallDirectory*/Rtools/mingw_64/bin", sep = ";")) #for 64 bit version
+Sys.setenv(BINPREF = "*InstallDirectory*/Rtools/mingw_64/bin")
+library(devtools)
+
+#Manually "force" version to be accepted 
+assignInNamespace("version_info", c(devtools:::version_info, list("3.5" = list(version_min = "3.3.0", version_max = "99.99.99", path = "bin"))), "devtools")
+find_rtools() # is TRUE now
+
+# Now you can install transformr then gganimate
+devtools::install_github("thomasp85/transformr")
+devtools::install_github("dgrtwo/gganimate")
+devtools::install_github("dkahle/ggmap")
+
+
+library(rgdal)
+library(ggmap)
+library(gifski)
+library(tweenr)
+library(transformr)
+library(devtools)
+library(dplyr)
+library(viridis)
+library(RSocrata)
+library(raster)
+library(sf)
+library(rpart)
+library(rasterVis)
+library(tidycensus)
+library(tigris)
+library(acs)
+library(stringr)
+library(maptools)
+library(rgdal)    # for readOGR and others
+library(sp)       # for spatial objects
+library(leaflet)  # for interactive maps (NOT leafletR here)
+library(dplyr)    # for working with data frames
+library(ggplot2)  # for plotting
+library(gganimate)
+library(rasterVis)
+library(gstat)
+library(spdep)
+library(stargazer)
+library(dimRed)
+library(caret)
+library(lubridate)
+library(tidyverse)
+library(yaml)
+library(knitr)
+library(SuperLearner)
+
+register_google(key = " AIzaSyDOEn1n9G3KKJewWJBmjbVtkpMAsFNEqKY ")
+```
+
+```{r setup, echo=FALSE}
+basemap <- get_map(location="Seattle, WA", zoom=11, source="stamen", 
+                   maptype ="toner")
+bmap <- ggmap(basemap)
+
+parking_lots <- st_read("Public_Garages_or_Parking_Lots.geojson")
+parking_zones <- st_read("Blockface.geojson")
+paid_parking <- st_read("Paid_Area_Curbspaces.geojson")
+
+parcels <- st_read("Parcels_for_King_County_with_Address_with_Property_Information__parcel_address_area.geojson") %>%
+  filter(CTYNAME=="SEATTLE")
+  
+  
+real_estate <- st_read("King_County_Real_Property__realprop_area.geojson")
+streets <- st_read("Seattle_Streets.geojson")
+parking_raw <- read.socrata("https://data.seattle.gov/resource/fdax-a9ur.json") 
+
+
+
+parking_raw$unitdesc <- as.factor(parking_raw$unitdesc)
+parking_raw$total_vehicle_count <- as.numeric(parking_raw$total_vehicle_count)
+parking_raw$parking_spaces <- as.numeric(parking_raw$parking_spaces)
+parking_raw$rate <- parking_raw$total_vehicle_count/parking_raw$parking_spaces
+parking <-  left_join(parking_raw, streets,by=c("unitdesc"="UNITDESC"), copy=TRUE)
+parking <- 
+  parking %>%
+  mutate(dateTime2 = mdy_hms(date_time))
+parking$hour <- hour(parking$dateTime2)
+parking$day <- wday(parking$dateTime2, label=TRUE)
+parking$day <- as.factor(parking$day)
+parking$day1 <- wday(wday(parking$dateTime2, label=FALSE))
+parking$unitdesc <-as.factor(parking$unitdesc)
+```
+
+```{r setup, echo=FALSE}
+parking %>%
+  dplyr::select(day,hour,total_vehicle_count) %>%
+  #mutate(dotw = wday(dateTime2,label=TRUE)) %>%
+  #  filter(dotw != "Sun" & dotw != "Sat") %>%
+  #mutate(hour = hour(dateTime2)) %>%
+  group_by(day,hour) %>%
+  #count()%>%
+  na.omit() %>%
+  ggplot(aes(x=hour, y=total_vehicle_count)) +
+  geom_bar(stat="identity") +
+  #geom_line() +
+  facet_wrap(~day)
+
+writeOGR(parcels,, "parcels_r", driver="ESRI Shapefile")
+
+map<-parking %>%
+  #mutate(frame=hour) %>%
+  filter(study_year=="2017") %>%
+  mutate(frame=as.integer((10*(day1)+(hour)))-17) %>%
+  dplyr::select(geometry, day1,day,hour,frame, parking_spaces, total_vehicle_count, unitdesc) %>%
+  na.omit() %>%
+  group_by(unitdesc,day1,frame) %>%
+  summarise(sum_vehicle=sum(total_vehicle_count)) #%>%#,mean_spaces=mean(parking_spaces))
+  left_join(streets,by=c("unitdesc"="UNITDESC"), copy=TRUE)%>%
+  dplyr::select(geometry,frame, sum_vehicle) #%>%
+  #ggmap(basemap) +
+  ggplot(aes(size = sum_vehicle, frame = frame))+
+  geom_sf() + 
+  #geom_sf(data=streets, aes(size=0.5, colour="light grey"))+ 
+  labs(title = "Hour: {frame}") +
+  transition_time(frame) +
+  ease_aes("linear")+
+  theme_minimal()
+
+ gif <-  ggplot(data=map, size = sum_vehicle, frame = frame, colour="cyan")+ 
+  geom_sf()+
+  transition_time(frame) +
+  labs(title = "Hour: {day}") +
+  ease_aes("linear")+
+  theme_minimal()
+
+animate(map, nframes = 100, renderer = gifski_renderer("gganim.gif"))
+
+ggmap::ggmap(basemap) + geom_sf(data=streets)
+
+bmap+
+  geom_sf(data=streets) + 
+  theme_minimal()
+
+
+ggplot() + 
+  geom_sf(data=parking) + 
+  theme_minimal()
+
+
+
+
+
+
+
+
+
+
+
+
+
+park_17 <- 
+  parking %>%
+  mutate(dateTime2 = mdy_hms(date_time)) #%>%
+  #filter(year(dateTime2) == "2017"
+         #,
+         #month(dateTime2) == "5"&"6"&"7"&"8"
+   
+
+
+
+
+
+park_17$hour <- hour(park_17$dateTime2)
+park_17$day <- wday(park_17$dateTime2, label=TRUE)
+
+
+park_17 %>%
+  dplyr::select(day,hour,total_vehicle_count) %>%
+  #mutate(dotw = wday(dateTime2,label=TRUE)) %>%
+  #  filter(dotw != "Sun" & dotw != "Sat") %>%
+  #mutate(hour = hour(dateTime2)) %>%
+  group_by(day,hour) %>%
+  #count()%>%
+  na.omit() %>%
+  ggplot(aes(x=hour, y=total_vehicle_count)) +
+  geom_bar(stat="identity") +
+  #geom_line() +
+  facet_wrap(~day)
+
+
+
+
+
+
+
+
+
+
+
+
+
+###Data wrangling 
+
+
+#creating a time series dataset or time space panel to look at parking space by time (w/ date time string)
+#do we need to change by timezone? check cheatsheet for that
+# time<- mdy_hms("9-27-17 20:00:00")
+time <- ymd_hms("2010-12-13 15:30:30")
+#what is the date format in Parking data? 
+head(parking$time_stamp)
+
+
+###I want to predict count of spaces used by Element Key. 
+###So, I group by Elemkey and get count of vehicles parked 
+### Could also group by Elementkey and get count of available spaces (coefficient for each parking area)
+#First, get just 2017 parking data
+library(lubridate)
+park_17 <- 
+  parking %>%
+  mutate(dateTime2 = ymd_hms(time_stamp)) %>%
+  filter(year(dateTime2) == "2017"
+         #,
+         #month(dateTime2) == "5"&"6"&"7"&"8"
+  ) 
+head(park_17)
+#Output - filter converts date time to a year;  26 failed to parse? 
+#Can remove July Filter or replace w/ something else
+
+#parking volume by elementkey (ID) AKA frequency of trips for that year, by station
+park_17 %>%
+  group_by(unitdesc) %>%
+  count()
+
+#Count parking by hour
+library(dplyr)
+library(lubridate)
+park_17 %>%
+  #get only the 29th week (its in July)-  change parameter here.... 
+  #  filter(week(dateTime2) == "29") %>%
+  #New field DOTW day of the week, which uses weekday function (returned value 1 - 7)
+  #Label=TRUE returns a string field of day of the week
+  mutate(dotw = wday(dateTime2,label=TRUE)) %>%
+  #filter out weekdays (don't give me weekends, just week days)
+  #  filter(dotw != "Sun" & dotw != "Sat") %>%
+  #mutate the hour of the day
+  mutate(hour = hour(dateTime2)) %>%
+  #Groupby Element Key, DOTW, and HOUR AKA Get count() of trips by station id, day of the week and hour
+  group_by(elmntkey,dotw,hour) %>%
+  count() %>% #not sure what n function is counting here????
+  #sort
+  arrange(dotw,-hour,elmntkey) %>%
+  as.data.frame() %>%
+  head(40)
+
+#OUTPUT FOR EVERY ELEMENT KEY, you can see day of the week, hour, and count of trips.
+##Use this to make space time predictions for parking
+
+
+#observed time series plot for all of the elementkeys for all of the days of the week
+library(tidyverse)
+library(ggplot2)
+
+park_17$hour <- hour(park_17$dateTime2)
+park_17$day <- wday(park_17$dateTime2, label=TRUE)
+
+
+
+park_17 <-park_17 %>%
+  dplyr::select(day,hour,total_vehicle_count) #%>%
+  #mutate(dotw = wday(dateTime2,label=TRUE)) %>%
+  #  filter(dotw != "Sun" & dotw != "Sat") %>%
+  #mutate(hour = hour(dateTime2)) %>%
+  group_by(day,hour) #%>%
+  sum() %>%
+  ggplot(aes(hour, total_vehicle_count)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~day)
+#plot shows that weekends are busier - what would be the feature? how would you put into regression?
+#put in as dummy variable that says weekend or not by using "is.weekend"
+#or account for saturday, sunday, and every other day
+#what other time-things are you controlling for? 
+#how would you feature engineer around commute patterns? Just from this time series... do fixed effect for middle of the night based on these plots. You can REMOVE times. Build features that pick up on humps "its all about the humps"
+
+
+
+
+#The same as above for 2016
+park_16 <- 
+  parking %>%
+  mutate(dateTime2 = ymd_hms(time_stamp)) %>%
+  filter(year(dateTime2) == "2016"
+         #,
+         #month(dateTime2) == "5"&"6"&"7"&"8"
+  ) 
+head(park_16)
+#Output - filter converts date time to a year;  26 failed to parse? 
+#Can remove July Filter or replace w/ something else
+
+#parking volume by elementkey (ID) AKA frequency of trips for that year, by station
+park_16 %>%
+  group_by(elmntkey) %>%
+  count()
+
+#Count parking by hour
+library(dplyr)
+library(lubridate)
+park_16 %>%
+  #get only the 29th week (its in July)-  change parameter here.... 
+  #  filter(week(dateTime2) == "29") %>%
+  #New field DOTW day of the week, which uses weekday function (returned value 1 - 7)
+  #Label=TRUE returns a string field of day of the week
+  mutate(dotw = wday(dateTime2,label=TRUE)) %>%
+  #filter out weekdays (don't give me weekends, just week days)
+  filter(dotw != "Sun" & dotw != "Sat") %>%
+  #mutate the hour of the day
+  mutate(hour = hour(dateTime2)) %>%
+  #Groupby Element Key, DOTW, and HOUR AKA Get count() of trips by station id, day of the week and hour
+  group_by(elmntkey,dotw,hour) %>%
+  count() %>% #not sure what n function is counting here????
+  #sort
+  arrange(dotw,-hour,elmntkey) %>%
+  as.data.frame() %>%
+  head(6)
+
+#OUTPUT FOR EVERY ELEMENT KEY, you can see day of the week, hour, and count of trips.
+##Use this to make space time predictions for parking
+
+
+#observed time series plot for all of the elementkeys for all of the days of the week
+library(tidyverse)
+library(ggplot2)
+park_16 %>%
+  mutate(dotw = wday(dateTime2,label=TRUE)) %>%
+  # filter(dotw != "Sun" & dotw != "Sat") %>%
+  mutate(hour = hour(dateTime2)) %>%
+  group_by(dotw,hour) %>%
+  count() %>%
+  ggplot(aes(hour, n)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~dotw)
+
+#TRIAL REGRESSION FOR ONLY WEEK
+park_17 %>%
+  filter(week(dateTime2) == "29") %>%
+  mutate(dotw = wday(dateTime2,label=TRUE)) %>%
+  #filter(dotw != "Sun" & dotw != "Sat") %>%
+  mutate(hour = hour(dateTime2)) %>%
+  group_by(elmntkey,dotw,hour) %>%
+  count() %>%
+  ungroup() %>%
+  select(-elmntkey) %>%    
+  lm(log(n) ~ ., data=.) %>%
+  summary()
+```
+
+###RFS selected an Ensemble Model
+###An ensemble occurs when the probability predictions or numerical predictions of multiple machine #models are combined by averaging, weighting each model and adding them together or using the most #common observation between models. This provides a multiple vote scenario that is likely to drive a #prediction to the correct class or closer to the correct number in regression models. Ensembles tend #to work best when there are disagreements between the models being fit. The concept of combining #multiple models also seems to perform well in practice, often above implementations of single #algorithms.
+
+###Ensembles can be created manually by fitting multiple models, predicting with each of them and then #combining them.
