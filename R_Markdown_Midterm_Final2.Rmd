@@ -1,0 +1,1114 @@
+---
+title: "R_Markdown_Midterm_Final"
+author: "TREP"
+date: "11/8/2018"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+editor_options: null
+chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# HOW DOES TEAM RANDOM FOREST SERVICE PREDICT HOME PRICES FOR NASHVILLE?
+#### Hedonic Prediction & Feature Engineering
+
+#####I. Introduction
+
+######Project Purpose 
+To predict sale prices of properties in the city of Nashville, Tennessee
+
+######Who Cares? 
+Sale price prediction is a critical arae of data science. It's important for to buyers, industry professionals, and government. Accurate predictive models are beneficial for buyers and sellers. When both parties have access to the same data, then the best deal for both parties can be negotiated fairly. Price forecastig supports municipalities as a way to levy consistent and fair property tax rates. 
+
+We are Team Random Forest Service, and for us, this R-Studio exercise started like all the rest, in a matrix of confusion, metaphorically speaking. But we were especially interested in this project for the opportunity to investigate the relationship of race and prices, as well as the plethora of other factors that may or may not be statistically significant to the cost of real estate in Nashville. 
+
+######Why is this hard? 
+This task is challenging for many reasons. Urban places are inherently complex. Specifically, algorithm-building, or predictive modelling, is outside the typical (or traditional) practice of social science work. This is a practical exercise, not theoretical, and requires a different set of problem-solving techniques and balance of test metrics to determine both accuracy and generalizability. Because of the complexity of cities themselves and the wide variety of work that occurs and entities working within cities, data exists at many scales, units, and levels of nuance and completeness. Project management (time and skill management) building a workflow, and wrangling data are time consuming. Specifically, our team encountered difficulty figuring out how to account for and represent local clustering or comprable, near-by prices ('comps').
+
+######What's our Strategy? 
+We started with what we know: Open R-Studio, load all the appropriate packages, and set the shared Working Directory. Then, talk it out. And the fun begins... discussing "what if" scenarios, finding data, coercing data into the correct format, and hacking the model until we found the selection of variables which yielded the most accurate model. Said in another way, our strategy would best be described as trial and error (and trial).   
+```{r include=FALSE, message = FALSE, warning= FALSE, }
+rm(list=ls())
+
+library(sf)
+library(rpart)
+#library(tidycensus)
+#library(tigris)
+library(stringr)
+#library(maptools)
+library(rgdal)    # for readOGR and others
+library(sp)       # for spatial objects
+#library(leaflet)  # for interactive maps (NOT leafletR here)
+library(dplyr)    # for working with data frames
+library(ggplot2)  # for plotting
+#library(raster)
+#library(tmap)
+library(gstat)
+library(spdep)
+library(stargazer)
+library(caret)
+#install.packages("rmarkdown")
+#install.packages("kableExtra")
+library(markdown)
+library(kableExtra)
+library(tidyverse)
+
+ setwd("~/Dropbox/MUSA-MIDTERM/Final Output Layers")
+ 
+ mapTheme <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 14,colour = "black"),
+    plot.subtitle=element_text(face="italic"),
+    plot.caption=element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.minor = element_blank()
+    #panel.border = element_rect(colour = "black", fill=NA, size=0)
+  )
+}
+
+```
+
+```{r echo=FALSE, options(knitr.table.format = "html")}
+ hed <- read.csv(file = "final_Output.csv")
+ hed2 <- read.csv(file= "final_Output-MarkdownVersion.csv")
+ hed2$kenID <- as.integer(hed2$kenID)
+```
+
+```{r echo=FALSE }
+library(kableExtra)
+dt <- filter(hed2, kenID<16)
+```
+######What did we find? 
+Home prices are spatially correlated, such that similar prices tend to cluster around other similar prices. Our model predicts values on average approximately 48% off the actual value of the sale. There is a range in the predictive power of our model. While some predictions are accurate, others (in particular those for expensive properties) are less accurate, which indicates a lack of generalizability. 
+
+#####II. DATA
+We are practicing feature engineering, in which we take a variable and recode it into a strong predictor of sale price. Our feature engineering process was highly iterative. We attempted to select variables that were appropriately divided to avoid collinearity (assumption: overloading the model with variables might cause muddling of predictions).
+
+Primary Research Question: 
+WHAT IMPACTS SALE PRICES? 
+
+What do we think? 
+1)	There is a statistically significant, qualitative difference between subsets of variables, such as decades of effective year built. 
+2)	Generally speaking, we believe that nearer things (spatial relationships) are important. These spatial relationships impact home prices in a number of different ways. For example, distance to desirable school districts will impact sale of price of a residential property.
+3)	Urban and local knowledge may have a greater impact than census or interior feature information. Being both homeowners and urban-dwellers, we felt we could speak to generalizable knowledge about urban-living. Urban buyers are willing to pay for convenience. To capture local knowledge we sourced information about the perceived neighborhood quality and amenities in the urban neighborhoods understudy.
+
+We reviewed provided data and gathered additional data from Google My Maps, the Nashville City Planning and government websites, and ArcGIS online, to name a few.
+
+######Summary statistics
+```{r dt, echo=FALSE}
+kable(dt) %>%
+  kable_styling(bootstrap_options = c("striped", "responsive", font_size = 9  ))
+```
+```{r include=FALSE, warning=FALSE, message=FALSE, df }
+library(tidyverse)
+library(sf)
+library(dplyr)
+unlist(lapply(hed, class)) # for viewing variable classes
+
+df <- select(hed,-Extr_Wall,-Story_Ht,-TaxDistrict,-OwnerState,-landcover_code,-WGS1984X_1,-WGS1984Y_1,-HeatingTyp,-notheated, -FID, -OwnerInstr, -OwnerName, -OwnerAddre, -OwnerAdd_1, -OwnerCity, -OwnerZip, -OwnerCount, -LocationAd, -LocationCi, -TaxDistric, -ParcelId_p, -accountnum, -Card,-District, -LandUseDes, -Building_T, -Grade, -Frame, -yearbuilt_, -effyearbui, -avgHtfl_bu, -units_buil, -sf_ifla, -sf_finis_1,-sf_fin_les,-ac_sfyi, -NumofUnits,-Land_Unit_, -baths, -halfbaths, -fpla, -HeatingTyp, -kenID_1, -Busline_name, -Park_Name, -Anti_Amenity, -Amenity)
+df <-na.omit(df)
+```
+######Description of Variables:
+
+Neighborhood Qualities
+Shootings 
+Percent vacant- from census information
+Percent renter- from census information
+Percent white- from census information 
+Percent tree cover (tree canopy)
+Distance to dumping- from 311 calls density
+Distance to highway exits
+Land cover type- divided into forest, developed, open, medium-density, low-density, high-density, and pasture 
+Within 500' of rehabs- density of building permit applications 
+Within 500' of newhomes- density of building permit applications 
+Within 500'of additions- density of building permit applications 
+Within 500' of bars
+Within 500' of alcohol carryouts
+Within 1000' of AirBnB rentals
+
+Amenities
+Distance to MTA Buslines (public transit) 
+Distance to Business Improvement Districts (high density) 
+Distance to Parks
+Distance to "Anti-amenities" (Fried chicken restaurants, adult entertainment, and Walmarts)
+Distance to Amenities (Markets, grocery stores, and coffeeshops)
+School district
+
+Property/Internal Characteristics (as specified in the provided data)
+Neighborhood Assessor
+Acrage 
+Building Type
+Fixtures
+Foundation
+Story Height
+Exterior wall
+Building grade
+Frame
+Effective year built- divided by (estimated) architectural or development periods 
+Bedrooms within units 
+Gross squarefeet (sf_sketched in the provided data)
+Physical depreciation
+Number of units
+Baths
+Halfbaths- we experimented with division of this variable by 0, 1, <2; 0, 1, <3; and 0, 1, <4 
+```{r include=FALSE}
+
+df$Forest <- ifelse(df$landcover == "Forest", 1, 0)
+df$Dev_Open <- ifelse(df$landcover == "Developed, Open Space", 1, 0)
+df$Dev_Med <- ifelse(df$landcover == "Developed, Medium Intensity", 1, 0)
+df$Dev_Low <- ifelse(df$landcover == "Developed, Low Intensity", 1, 0)
+df$Dev_High <- ifelse(df$landcover == "Developed, High Intensity", 1, 0)
+df$Pasture <- ifelse(df$landcover == "Pasture", 1, 0)
+
+df$effyearbui_1 <- as.numeric(df$effyearbui_1)
+df$Built_before_1920 <- ifelse(df$effyearbui_1 <= 1920, 1, 0)
+df$Built_1921_1950 <- ifelse(df$effyearbui_1 >= 1921 & df$effyearbui_1 <= 1950, 1, 0)
+df$Built_1951_1960 <- ifelse(df$effyearbui_1 >= 1951 & df$effyearbui_1 <= 1960, 1, 0)
+df$Built_1961_1970 <- ifelse(df$effyearbui_1 >= 1961 & df$effyearbui_1 <= 1970, 1, 0)
+df$Built_1971_1980 <- ifelse(df$effyearbui_1 >= 1971 & df$effyearbui_1 <= 1980, 1, 0)
+df$Built_1981_1990 <- ifelse(df$effyearbui_1 >= 1981 & df$effyearbui_1 <= 1990, 1, 0)
+df$Built_1991_2000 <- ifelse(df$effyearbui_1 >= 1991 & df$effyearbui_1 <= 2000, 1, 0)
+df$Built_2001_2010 <- ifelse(df$effyearbui_1 >= 2001 & df$effyearbui_1 <= 2010, 1, 0)
+df$Built_2011_2018 <- ifelse(df$effyearbui_1 >= 2011 & df$effyearbui_1 <= 2017, 1, 0)
+
+df$halfbaths_12 <- ifelse(df$halfbaths_1 == 2, 1, 0)
+df$halfbaths_13 <- ifelse(df$halfbaths_1 == 3, 1, 0)
+df$halfbaths_14 <- ifelse(df$halfbaths_1 == 4, 1, 0)
+
+df$effyearbui_1 <- as.factor(df$effyearbui_1)
+df$bedroomsun_1 <- as.factor(df$bedroomsun_1)
+df$baths_1 <- as.factor(df$baths_1)
+df$halfbaths_1 <- as.factor(df$halfbaths_1)
+df$Bldg_Type <- as.factor(df$Bldg_Type)
+df$BLdgGrade <- as.factor(df$BLdgGrade)
+df$Frame_1 <- as.factor(df$Frame_1)
+df$Phys_Depre_1 <- as.factor(df$Phys_Depre_1)
+df$landcover <- as.factor(df$landcover)
+df$Foundation <- as.factor(df$Foundation)
+
+df$NbrhdAssr <- as.numeric(df$NbrhdAssr)
+df$SalePrice <- as.numeric(df$SalePrice)
+df$CouncilDis <- as.numeric(df$CouncilDis)
+df$LocationZi <- as.numeric(df$LocationZi)
+df$Fixtures <- as.integer(df$Fixtures)
+df$sf_Gross <-as.numeric(df$sf_Gross)
+df$rehabs_500 <-as.numeric(df$rehabs_500)
+df$carryout_500 <-as.numeric(df$carryout_500)
+df$pct_tree <-as.numeric(df$pct_tree)
+df$carryout_500 <-as.numeric(df$carryout_500)
+df$pct_vacnt <-as.numeric(df$pct_vacnt)
+df$pct_white <-as.numeric(df$pct_white)
+df$avg_Price_5 <-as.numeric(df$avg_Price_5)
+df$Avg_Price_3 <-as.numeric(df$Avg_Price_3)
+
+df0 <- df[df[,"test"] == 1,] 
+df1  <- df[df[,"test"] == 0,] 
+
+Vac1 <- df1[df1[,"LandUseFul"] == c('VACANT RESIDENTIAL LAND'),]
+Vac0 <- df0[df0[,"LandUseFul"] == c('VACANT RESIDENTIAL LAND'),]
+
+df1 <- df1[df1[,"LandUseFul"] != c('VACANT RESIDENTIAL LAND'),]
+df0 <- df0[df0[,"LandUseFul"] != c('VACANT RESIDENTIAL LAND'),]
+library(leaflet)
+pal <- colorNumeric(
+  palette = "YlGnBu",
+  domain = hed$SalePrice)
+
+m <- leaflet() %>% setView(lng = -86.774832, lat = 36.165074, zoom = 11)   
+
+```
+#####II.b. DATA: Correlation Matrix
+```{r include=FALSE}
+library(corrplot)
+str(df1) #see the different structures of the variables #u need to remove factors and characters
+correlations <- df1 %>% select(-kenID,-LocationZi,-CouncilDis,-CensusBloc,-LandUseFul,-Neighborho,-Story_Heig,-Exterior_W,-Phys_Depre,-Foundation, -longitude,-latitude,-test,-landcover,-NbrhdAssr,-Bldg_Type,-BLdgGrade,-Frame_1,-effyearbui_1,-bedroomsun_1,-Phys_Depre_1,-baths_1,-halfbaths_1,-Forest,-Dev_Open,-Dev_Med,-Dev_Low,-Dev_High,-Pasture,-Built_before_1920,-Built_1921_1950,-Built_1951_1960,-Built_1961_1970,-Built_1971_1980,-Built_1981_1990,-Built_1991_2000,-Built_2001_2010,-Built_2011_2018,-halfbaths_12,-halfbaths_13,-halfbaths_14)
+str(correlations)
+mat <- round(cor(correlations), 2) #running the corr matrix again remember this is a matrix and not a data frame
+```
+```{r, mat, echo=FALSE}
+corrplot(mat, method = "color", order = "AOE", addCoef.col="darkgrey", type = "upper",
+         addCoefasPercent = FALSE ,number.cex = .3, tl.cex = 0.5, tl.offset =1, tl.col = "black",title = "", col=colorRampPalette(c("YELLOW","WHITE","MAGENTA"))(200))
+```
+#####II.c. DATA: Dependent Variable (Sale Price)
+```{r include=FALSE}
+
+zipMap <- st_read("geo_export_0016819c-006a-4efa-8fa6-a6c33e4f7d4a.shp")
+
+st_transform(zipMap,"+no_defs +datum=WGS84 +proj=longlat")
+
+
+set.seed(1033)
+trainIndex <- createDataPartition(df$SalePrice, p = .75, 
+                                  list = FALSE, 
+                                  times = 1)
+head(trainIndex)
+regB <- lm((SalePrice) ~ ., data=df1%>% select(-test, -longitude, -latitude, -kenID,
+                                               -LandUseFul, 
+                                               #-Story_Heig, 
+                                               #-Phys_Depre_1, 
+                                               -Exterior_W, 
+                                               -Acrage_1, 
+                                               -Phys_Depre, 
+                                               -Foundation, 
+                                               -Fixtures, 
+                                               #-sf_bsmt, 
+                                               -NbrhdAssr, 
+                                               -bedroomsun, 
+                                               #-Acrage, 
+                                               #-pct_tree, 
+                                               -BLdgGrade, 
+                                               -sf_Gross, 
+                                               -landcover, 
+                                               -rehabs_500, 
+                                               #-carryout_500, 
+                                               -bedroomsun_1, 
+                                               -halfbaths_1,
+                                               -halfbaths_12,
+                                               -halfbaths_13,
+                                               -halfbaths_14,
+                                               -baths_1, 
+                                               #-Dist_AntiAmenity, 
+                                               -Park_name_1, 
+                                               #-newhomes_500, 
+                                               -addition_500, 
+                                               -landcover, 
+                                               -effyearbui_1,
+                                               -Pasture,
+                                               -NumofUnits_1,
+                                               #-LocationZi,
+                                               #-CouncilDis,
+                                               -CensusBloc,
+                                               -Neighborho,
+                                               #-Acrage,
+                                               #-Story_Heig,
+                                               -roomsunits,
+                                               #-sf_finishe,
+                                               -sf_bsmt,
+                                               #-sf_bsmt_fi,
+                                               -sf_sketche,
+                                               -Zone_Asses,
+                                               -shootings,
+                                               #-dist_dumping,
+                                               #-dist_hwyext,
+                                               #-bars_500,
+                                               #-carryout_500,
+                                               #-rentals_1000,
+                                               -Bldg_Type,
+                                               #-Frame_1,
+                                               #-Phys_Depre_1,
+                                               #-Dist_BusLn,
+                                               #-Dist_BID,
+                                               -Dist_AntiAmenity,
+                                               #-Dist_Amenity,
+                                               #-school_dis,
+                                               -pct_vacnt,
+                                               -pct_renter,
+                                               #-pct_white,
+                                               -Forest,
+                                               -Dev_Open,
+                                               -Dev_Med,
+                                               -Dev_Low,
+                                               -Dev_High,
+                                               -Built_before_1920,
+                                               -Built_1921_1950,
+                                               #-Built_1951_1960,
+                                               #-Built_1961_1970,
+                                               #-Built_1971_1980,
+                                               #-Built_1981_1990,
+                                               #-Built_1991_2000,
+                                               #-Built_2001_2010,
+                                               #-Built_2011_2018,
+                                               -Avg_Price_3))
+                                               #-avg_Price_5,
+                                               #-fit.cluster))
+                                               
+                                               summary(regB)
+                                               
+                                               
+                                               dfTrain <- df1[ trainIndex,]
+                                               dfTest  <- df1[-trainIndex,]
+                                               
+                                               
+                                               dfPredict25 <- as.data.frame(predict(regB, (dfTest)))
+                                               
+                                               dfPredict <- as.data.frame(predict(regB, (df1)))
+                                               
+                                               dfPredictAll <- as.data.frame(predict(regB, (df)))
+                                               
+                                               names(dfPredict) <- c("SalePrice")
+                                               
+                                               names(dfPredictAll) <- c("PredictedPrice")
+
+regResiduals <- 
+  data.frame(residuals = (regB$residuals),
+             fitted_values = (regB$fitted.values),
+             SalePrice = df1 %>% select(SalePrice),
+             Longitude = df1 %>% select(longitude),
+             Latitude = df1 %>% select(latitude),
+             Name = df1 %>% select(LocationZi),
+             Legend = "reg")
+
+regResiduals$LocationZi <- as.factor(regResiduals$LocationZi)
+
+regResiduals$MAPE <- (abs((regResiduals$fitted_values) - regResiduals$SalePrice) / regResiduals$SalePrice)
+
+regResiduals$MAE <- abs((regResiduals$fitted_values)-regResiduals$SalePrice)
+
+
+residTest  <- regResiduals[-trainIndex,]
+
+
+regResiduals_Summary <-
+  regResiduals %>%
+  group_by(LocationZi) %>%
+  summarize(meanResidual = mean(residuals, na.rm=TRUE),
+            sdResidual = sd(residuals, na.rm=TRUE),
+            meanSales = mean(SalePrice),
+            f_v = mean(fitted_values),
+            MAPE = mean(MAPE),
+            countSales = n()) %>%
+  mutate(Legend="reg") %>%
+  filter(countSales > 5) %>%
+  left_join(zipMap, by = c("LocationZi"="zip")) %>%
+  st_sf()
+```
+
+```{r zipMap, echo=FALSE}
+ggplot() + 
+  geom_sf(data=zipMap, aes(), fill=NA, colour="dark grey", size=.5) +
+  geom_point(data=regResiduals, 
+             aes(longitude,latitude, color=factor(ntile(SalePrice,5))),size=1) +
+  
+  scale_colour_manual(values = c("#edf8fb","#b3cde3","#8c96c6","#8856a7","#810f7c"),
+                      labels=as.character(quantile(regResiduals$SalePrice,
+                                                   c(.1,.2,.4,.6,.8),na.rm=T)),
+                      name="Observed Sale Price \n(Quintile Breaks)") +
+  mapTheme()
+```
+#####II.d. DATA: Independent Variables
+```{r echo=FALSE}
+ggplot() + 
+  geom_sf(data=zipMap, aes(), fill=NA, colour="dark grey", size=.5) +
+  geom_point(data=df, 
+             aes(longitude,latitude, color=(pct_tree))) + mapTheme() + ggtitle("Percent Tree Cover")
+  
+ggplot() + 
+  geom_sf(data=zipMap, aes(), fill=NA, colour="dark grey", size=.5) +
+  geom_point(data=df, 
+             aes(longitude,latitude, color=(rentals_1000))) + mapTheme() + ggtitle("Number of AirBnB's within 1000 Feet")
+
+ggplot() + 
+  geom_sf(data=zipMap, aes(), fill=NA, colour="dark grey", size=.5) +
+  geom_point(data=df, 
+             aes(longitude,latitude, color=(Dist_Amenity))) + mapTheme() + ggtitle("Distance to Grocery Stores and Coffee Shops")
+
+
+ggplot() + 
+  geom_sf(data=zipMap, aes(), fill=NA, colour="dark grey", size=.5) +
+  geom_point(data=df, 
+             aes(longitude,latitude, color=(Dist_BusLn))) + mapTheme() + ggtitle("Distance to Bus Stop")
+
+
+ggplot() + 
+  geom_sf(data=zipMap, aes(), fill=NA, colour="dark grey", size=.5) +
+  geom_point(data=df, 
+             aes(longitude,latitude, color=(pct_renter))) + mapTheme() + ggtitle("Percent Rental Units (Census Blocks)")
+
+
+ggplot() + 
+  geom_sf(data=zipMap, aes(), fill=NA, colour="dark grey", size=.5) +
+  geom_point(data=df, 
+             aes(longitude,latitude, color=(pct_white))) + mapTheme() + ggtitle("Percent Racially White (Census Blocks)")
+```
+
+#####II.e. DATA: Scatterplots
+```{r echo=FALSE}
+
+dfna <- df
+  
+dfna[dfna==0]<-NA
+
+scatter2 <- ggplot(dfna, aes((pct_tree), log(SalePrice))) + geom_point(data = dfna, aes(x=(pct_tree), y=log(SalePrice)),alpha=0.75, color="dark grey", shape= 16, size=0.1,
+                                                                                       inherit.aes = FALSE)   + theme_minimal()
+
+scatter2 +
+  stat_binhex(aes(x=(pct_tree), y=log(SalePrice), alpha=..count..),na.rm=TRUE, fill="magenta") + ggtitle("") + labs(x="Percent Tree Cover on Property",y="Log of Observed Sale Prices") + geom_smooth(method = lm, se=FALSE, colour = "black")
+
+
+
+scatter3 <- ggplot(dfna, aes((dist_dumping), log(SalePrice))) + geom_point(data = dfna, aes(x=(dist_dumping), y=log(SalePrice)),alpha=0.75, color="dark grey", shape= 16, size=0.1,
+                                                                       inherit.aes = FALSE)   + theme_minimal()
+
+scatter3 +
+  stat_binhex(aes(x=(dist_dumping), y=log(SalePrice), alpha=..count..),na.rm=TRUE, fill="magenta") + ggtitle("") + labs(x="Distance from 311 Reports of Illegal Dumping",y="Log of Observed Sale Prices") + geom_smooth(method = lm, se=FALSE, colour = "black")
+
+
+
+scatter4 <- ggplot(dfna, aes((rentals_1000), log(SalePrice))) + geom_point(data = dfna, aes(x=(rentals_1000), y=log(SalePrice)),alpha=0.75, color="dark grey", shape= 16, size=0.1,
+                                                                           inherit.aes = FALSE)   + theme_minimal()
+
+scatter4 +
+  stat_binhex(aes(x=(rentals_1000), y=log(SalePrice), alpha=..count..),na.rm=TRUE, fill="magenta") + ggtitle("") + labs(x="Number of AirBnB's within 1000 Feet",y="Log of Observed Sale Prices") + geom_smooth(method = lm, se=FALSE, colour = "black")
+
+
+
+scatter5 <- ggplot(dfna, aes((Dist_BID), log(SalePrice))) + geom_point(data = dfna, aes(x=(Dist_BID), y=log(SalePrice)),alpha=0.75, color="dark grey", shape= 16, size=0.1,
+                                                                           inherit.aes = FALSE)   + theme_minimal()
+
+scatter5 +
+  stat_binhex(aes(x=(Dist_BID), y=log(SalePrice), alpha=..count..),na.rm=TRUE, fill="magenta") + ggtitle("") + labs(x="Distance from Central Business District",y="Log of Observed Sale Prices") + geom_smooth(method = lm, se=FALSE, colour = "black")
+
+
+
+scatter6 <- ggplot(dfna, aes((Park_name_1), log(SalePrice))) + geom_point(data = dfna, aes(x=(Park_name_1), y=log(SalePrice)),alpha=0.75, color="dark grey", shape= 16, size=0.1,
+                                                                       inherit.aes = FALSE)   + theme_minimal()
+
+scatter6 +
+  stat_binhex(aes(x=(Park_name_1), y=log(SalePrice), alpha=..count..),na.rm=TRUE, fill="magenta") + ggtitle("") + labs(x="Distance from Metro Park",y="Log of Observed Sale Prices") + geom_smooth(method = lm, se=FALSE, colour = "black")
+
+
+
+scatter7 <- ggplot(dfna, aes((sf_Gross), log(SalePrice))) + geom_point(data = dfna, aes(x=(sf_Gross), y=log(SalePrice)),alpha=0.75, color="dark grey", shape= 16, size=0.1,
+                                                                          inherit.aes = FALSE)   + theme_minimal()
+
+scatter7 +
+  stat_binhex(aes(x=(sf_Gross), y=log(SalePrice), alpha=..count..),na.rm=TRUE, fill="magenta") + ggtitle("") + labs(x="Gross Square Feet",y="Log of Observed Sale Prices") + geom_smooth(method = lm, se=FALSE, colour = "black")
+
+
+
+scatter8 <- ggplot(dfna, aes((carryout_500), log(SalePrice))) + geom_point(data = dfna, aes(x=(carryout_500), y=log(SalePrice)),alpha=0.75, color="dark grey", shape= 16, size=0.1,
+                                                                       inherit.aes = FALSE)   + theme_minimal()
+
+scatter8 +
+  stat_binhex(aes(x=(carryout_500), y=log(SalePrice), alpha=..count..),na.rm=TRUE, fill="magenta") + ggtitle("") + labs(x="Number of Alcohol Carryouts Within 500 Feet",y="Log of Observed Sale Prices") + geom_smooth(method = lm, se=FALSE, colour = "black")
+
+
+
+scatter9 <- ggplot(dfna, aes((bars_500), log(SalePrice))) + geom_point(data = dfna, aes(x=(bars_500), y=log(SalePrice)),alpha=0.75, color="dark grey", shape= 16, size=0.1,
+                                                                           inherit.aes = FALSE)   + theme_minimal()
+
+scatter9 +
+  stat_binhex(aes(x=(bars_500), y=log(SalePrice), alpha=..count..),na.rm=TRUE, fill="magenta") + ggtitle("") + labs(x="Number of Bars Within 500 Square Feet",y="Log of Observed Sale Prices") + geom_smooth(method = lm, se=FALSE, colour = "black")
+```
+We've included plots for (1) Tree cover (2) Distance from Illegal Dumping (3) AirBnB's (4) Central Business District (5) Gross Square Feet (6) Carryouts (7) Bars 
+
+
+#####III. METHODS
+Our first model was a “kitchen sink” model that allowed us to observe the statistical significance of each variable. From that baseline understanding of variable significance, we partitioned 25/75% test/training sample. 
+
+We subdivided qualitative variables (from provided data on interior characteristics and neighborhood amenities) into chunks and used trial and error to achieve a model with a relatively accurate but also generalizable prediction. We tested the accuracy of the model and determined that it was not performing much better than a coin toss. So, we incorporated local spatial autocorrelation, believing that this variable was probaby the most impactful to real estate prices. We found 3 and 5 nearest neighbor and used the 5 nearest neighbor variable, representative of a larger neighborhood unit. 
+
+Our focus was on a work flow that would allow selection of variables directly into the regression model, testing of selected variables, and adjustment as necessary. 
+
+When we first ran the model, we were not able to predict the high value properties. By using K-means clustering, we were able to isolate areas of similar price and exclude the higher cost areas at will. 
+Moderately priced properties appear to get a predicted price bump in areas with high amounts of AirBnB properties. 
+
+K-means clustering with 4 clusters of sizes 30, 2401, 509, 7054
+Cluster means:
+  rentals_1000 avg_Price_5 fit.cluster
+1    12.566667   2717309.5           1
+2    10.830071    509273.8           2
+3    10.675835   1009992.9           3
+4     4.553303    198344.5           4
+
+
+#####IV. RESULTS
+
+######In-sample (training set) model results
+```{r, regB}
+regB <- lm(log(SalePrice) ~ ., data=df1%>% select(-test, -longitude, -latitude, -kenID,
+                                               -LandUseFul, 
+                                               #-Story_Heig, 
+                                               #-Phys_Depre_1, 
+                                               -Exterior_W, 
+                                               -Acrage_1, 
+                                               -Phys_Depre, 
+                                               -Foundation, 
+                                               -Fixtures, 
+                                               #-sf_bsmt, 
+                                               -NbrhdAssr, 
+                                               -bedroomsun, 
+                                               #-Acrage, 
+                                               #-pct_tree, 
+                                               -BLdgGrade, 
+                                               -sf_Gross, 
+                                               -landcover, 
+                                               -rehabs_500, 
+                                               #-carryout_500, 
+                                               -bedroomsun_1, 
+                                               -halfbaths_1,
+                                               -halfbaths_12,
+                                               -halfbaths_13,
+                                               -halfbaths_14,
+                                               -baths_1, 
+                                               #-Dist_AntiAmenity, 
+                                               -Park_name_1, 
+                                               #-newhomes_500, 
+                                               -addition_500, 
+                                               -landcover, 
+                                               -effyearbui_1,
+                                               -Pasture,
+                                               -NumofUnits_1,
+                                               #-LocationZi,
+                                               #-CouncilDis,
+                                               -CensusBloc,
+                                               -Neighborho,
+                                               #-Acrage,
+                                               #-Story_Heig,
+                                               -roomsunits,
+                                               #-sf_finishe,
+                                               -sf_bsmt,
+                                               #-sf_bsmt_fi,
+                                               -sf_sketche,
+                                               -Zone_Asses,
+                                               -shootings,
+                                               #-dist_dumping,
+                                               #-dist_hwyext,
+                                               #-bars_500,
+                                               #-carryout_500,
+                                               #-rentals_1000,
+                                               -Bldg_Type,
+                                               #-Frame_1,
+                                               #-Phys_Depre_1,
+                                               #-Dist_BusLn,
+                                               #-Dist_BID,
+                                               -Dist_AntiAmenity,
+                                               #-Dist_Amenity,
+                                               #-school_dis,
+                                               -pct_vacnt,
+                                               -pct_renter,
+                                               #-pct_white,
+                                               -Forest,
+                                               -Dev_Open,
+                                               -Dev_Med,
+                                               -Dev_Low,
+                                               -Dev_High,
+                                               -Built_before_1920,
+                                               -Built_1921_1950,
+                                               #-Built_1951_1960,
+                                               #-Built_1961_1970,
+                                               #-Built_1971_1980,
+                                               #-Built_1981_1990,
+                                               #-Built_1991_2000,
+                                               #-Built_2001_2010,
+                                               #-Built_2011_2018,
+                                               -Avg_Price_3))
+                                               #-avg_Price_5,
+                                               #-fit.cluster))
+                                               
+                                               summary(regB)
+                                               
+```
+######IV.b. RESULTS: R^2, mean absolute error, and MAPE for test set
+```{r include=FALSE}
+
+zipMap <- st_read("geo_export_0016819c-006a-4efa-8fa6-a6c33e4f7d4a.shp")
+
+st_transform(zipMap,"+no_defs +datum=WGS84 +proj=longlat")
+
+
+set.seed(1033)
+trainIndex <- createDataPartition(df$SalePrice, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+head (trainIndex)
+```
+
+```{r echo=FALSE}
+regB <- lm((SalePrice) ~ ., data=df1%>% select(-test, -longitude, -latitude, -kenID,
+                                               -LandUseFul, 
+                                               #-Story_Heig, 
+                                               #-Phys_Depre_1, 
+                                               -Exterior_W, 
+                                               -Acrage_1, 
+                                               -Phys_Depre, 
+                                               -Foundation, 
+                                               -Fixtures, 
+                                               #-sf_bsmt, 
+                                               -NbrhdAssr, 
+                                               -bedroomsun, 
+                                               #-Acrage, 
+                                               #-pct_tree, 
+                                               -BLdgGrade, 
+                                               -sf_Gross, 
+                                               -landcover, 
+                                               -rehabs_500, 
+                                               #-carryout_500, 
+                                               -bedroomsun_1, 
+                                               -halfbaths_1,
+                                               -halfbaths_12,
+                                               -halfbaths_13,
+                                               -halfbaths_14,
+                                               -baths_1, 
+                                               #-Dist_AntiAmenity, 
+                                               -Park_name_1, 
+                                               #-newhomes_500, 
+                                               -addition_500, 
+                                               -landcover, 
+                                               -effyearbui_1,
+                                               -Pasture,
+                                               -NumofUnits_1,
+                                               #-LocationZi,
+                                               #-CouncilDis,
+                                               -CensusBloc,
+                                               -Neighborho,
+                                               #-Acrage,
+                                               #-Story_Heig,
+                                               -roomsunits,
+                                               #-sf_finishe,
+                                               -sf_bsmt,
+                                               #-sf_bsmt_fi,
+                                               -sf_sketche,
+                                               -Zone_Asses,
+                                               -shootings,
+                                               #-dist_dumping,
+                                               #-dist_hwyext,
+                                               #-bars_500,
+                                               #-carryout_500,
+                                               #-rentals_1000,
+                                               -Bldg_Type,
+                                               #-Frame_1,
+                                               #-Phys_Depre_1,
+                                               #-Dist_BusLn,
+                                               #-Dist_BID,
+                                               -Dist_AntiAmenity,
+                                               #-Dist_Amenity,
+                                               #-school_dis,
+                                               -pct_vacnt,
+                                               -pct_renter,
+                                               #-pct_white,
+                                               -Forest,
+                                               -Dev_Open,
+                                               -Dev_Med,
+                                               -Dev_Low,
+                                               -Dev_High,
+                                               -Built_before_1920,
+                                               -Built_1921_1950,
+                                               #-Built_1951_1960,
+                                               #-Built_1961_1970,
+                                               #-Built_1971_1980,
+                                               #-Built_1981_1990,
+                                               #-Built_1991_2000,
+                                               #-Built_2001_2010,
+                                               #-Built_2011_2018,
+                                               -Avg_Price_3))
+                                               #-avg_Price_5,
+                                               #-fit.cluster))
+                                               
+                                               summary(regB)
+                                               
+```
+```{r include=FALSE}
+
+          dfTrain <- df1[ trainIndex,]
+                                               dfTest  <- df1[-trainIndex,]
+                                               
+                                               
+                                               dfPredict <- as.data.frame(predict(regB, (df1)))
+                                               
+                                               dfPredictAll <- as.data.frame(predict(regB, (df)))
+                                               
+                                               names(dfPredict) <- c("SalePrice")
+                                               
+                                               names(dfPredictAll) <- c("PredictedPrice")
+```
+
+```{r include=FALSE}
+regResiduals <- 
+  data.frame(residuals = (regB$residuals),
+             fitted_values = (regB$fitted.values),
+             SalePrice = df1 %>% select(SalePrice),
+             Longitude = df1 %>% select(longitude),
+             Latitude = df1 %>% select(latitude),
+             Name = df1 %>% select(LocationZi),
+             ID = df1 %>% select(kenID),
+             Legend = "reg")
+
+regResiduals$LocationZi <- as.factor(regResiduals$LocationZi)
+
+
+regResiduals$MAPE <- (abs((regResiduals$fitted_values) - regResiduals$SalePrice) / regResiduals$SalePrice)
+
+regResiduals$MAE <- abs((regResiduals$fitted_values)-regResiduals$SalePrice)
+```
+```{r include=FALSE}
+library(corrplot)
+str(df1) #see the different structures of the variables #u need to remove factors and characters
+correlations <- df1 %>% select(-kenID,-LocationZi,-CouncilDis,-CensusBloc,-LandUseFul,-Neighborho,-Story_Heig,-Exterior_W,-Phys_Depre,-Foundation, -longitude,-latitude,-test,-landcover,-NbrhdAssr,-Bldg_Type,-BLdgGrade,-Frame_1,-effyearbui_1,-bedroomsun_1,-Phys_Depre_1,-baths_1,-halfbaths_1,-Forest,-Dev_Open,-Dev_Med,-Dev_Low,-Dev_High,-Pasture,-Built_before_1920,-Built_1921_1950,-Built_1951_1960,-Built_1961_1970,-Built_1971_1980,-Built_1981_1990,-Built_1991_2000,-Built_2001_2010,-Built_2011_2018,-halfbaths_12,-halfbaths_13,-halfbaths_14)
+str(correlations)
+mat <- round(cor(correlations), 2) #running the corr matrix again remember this is a matrix and not a data frame
+
+```
+```{r echo=FALSE}
+corrplot(mat, method = "color", order = "AOE", addCoef.col="darkgrey", type = "upper",
+         addCoefasPercent = FALSE ,number.cex = .3, tl.cex = 0.5, tl.offset =1, tl.col = "black",title = "", col=colorRampPalette(c("YELLOW","WHITE","MAGENTA"))(200))
+```
+Table of R^2, MAE, MAPE                                            SUMMARY STATISTICS
+for the Test Set                                                    MAE: 98,438
+                                                                    MAPE: .4834
+```{r}
+
+regresiduals_table <- filter(regResiduals, kenID<16)
+
+kable(regresiduals_table) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+######IV.c. RESULTS: Cross-validataion tests on the training set (mean & standard deviation R^2)
+RMSE         Rsquared      MAE     
+193,968.1    0.5868058     100,110.5
+
+```{r include=FALSE}
+
+
+fitControl <- trainControl(method = "cv", number = 100)
+set.seed(825)
+
+lmFit1 <- train(SalePrice ~ ., data = df1%>% select(-test, -longitude, -latitude, -kenID,
+                                                    -LandUseFul, 
+                                                    #-Story_Heig, 
+                                                    #-Phys_Depre_1, 
+                                                    -Exterior_W, 
+                                                    -Acrage_1, 
+                                                    -Phys_Depre, 
+                                                    -Foundation, 
+                                                    -Fixtures, 
+                                                    #-sf_bsmt, 
+                                                    -NbrhdAssr, 
+                                                    -bedroomsun, 
+                                                    #-Acrage, 
+                                                    #-pct_tree, 
+                                                    -BLdgGrade, 
+                                                    -sf_Gross, 
+                                                    -landcover, 
+                                                    -rehabs_500, 
+                                                    #-carryout_500, 
+                                                    -bedroomsun_1, 
+                                                    -halfbaths_1,
+                                                    -halfbaths_12,
+                                                    -halfbaths_13,
+                                                    -halfbaths_14,
+                                                    -baths_1, 
+                                                    #-Dist_AntiAmenity, 
+                                                    -Park_name_1, 
+                                                    #-newhomes_500, 
+                                                    -addition_500, 
+                                                    -landcover, 
+                                                    -effyearbui_1,
+                                                    -Pasture,
+                                                    -NumofUnits_1,
+                                                    #-LocationZi,
+                                                    #-CouncilDis,
+                                                    -CensusBloc,
+                                                    -Neighborho,
+                                                    #-Acrage,
+                                                    #-Story_Heig,
+                                                    -roomsunits,
+                                                    #-sf_finishe,
+                                                    -sf_bsmt,
+                                                    #-sf_bsmt_fi,
+                                                    -sf_sketche,
+                                                    -Zone_Asses,
+                                                    -shootings,
+                                                    #-dist_dumping,
+                                                    #-dist_hwyext,
+                                                    #-bars_500,
+                                                    #-carryout_500,
+                                                    #-rentals_1000,
+                                                    -Bldg_Type,
+                                                    #-Frame_1,
+                                                    #-Phys_Depre_1,
+                                                    #-Dist_BusLn,
+                                                    #-Dist_BID,
+                                                    -Dist_AntiAmenity,
+                                                    #-Dist_Amenity,
+                                                    #-school_dis,
+                                                    -pct_vacnt,
+                                                    -pct_renter,
+                                                    #-pct_white,
+                                                    -Forest,
+                                                    -Dev_Open,
+                                                    -Dev_Med,
+                                                    -Dev_Low,
+                                                    -Dev_High,
+                                                    -Built_before_1920,
+                                                    -Built_1921_1950,
+                                                    #-Built_1951_1960,
+                                                    #-Built_1961_1970,
+                                                    #-Built_1971_1980,
+                                                    #-Built_1981_1990,
+                                                    #-Built_1991_2000,
+                                                    #-Built_2001_2010,
+                                                    #-Built_2011_2018,
+                                                    -Avg_Price_3,
+                                                    #-avg_Price_5
+                                                    ), 
+               method = "lm", 
+               trControl = fitControl)
+lmFit1
+
+Table2<-lmFit1$resample
+
+sd(lmFit1$resample[,3])
+```
+Cross-validation R^2 as a histogram
+```{r echo=FALSE}
+ ggplot(as.data.frame(lmFit1$resample), aes(MAE)) + 
+                        geom_histogram(bins=20) +
+                        labs(x="Mean Absolute Error",
+                             y="Count")
+```
+It is not over fit. Our model has a 48% accuracy rating. 
+
+```{r echo=FALSE}
+
+#reg3PredValues <- 
+#  data.frame(observedSales = test$SALES_VOL,
+#             predictedSales = reg3Pred)
+
+#reg3PredValues <-
+#  reg3PredValues %>%
+#  mutate(error = predictedSales - observedSales) %>%
+#  mutate(absError = abs(predictedSales - observedSales)) %>%
+# mutate(percentAbsError = abs(predictedSales - observedSales) / observedSales) 
+
+#head(reg3PredValues)
+
+#mean(reg3PredValues$absError)
+
+```
+
+######IV.d. RESULTS: Predicted prices as a function of observed
+```{r include=FALSE}
+
+zipMap <- st_read("geo_export_0016819c-006a-4efa-8fa6-a6c33e4f7d4a.shp")
+
+st_transform(zipMap,"+no_defs +datum=WGS84 +proj=longlat")
+
+set.seed(1033)
+trainIndex <- createDataPartition(df$SalePrice, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+head(trainIndex)
+regB <- lm((SalePrice) ~ ., data=df1%>% select(-test, -longitude, -latitude, -kenID,
+                                               -LandUseFul, 
+                                               #-Story_Heig, 
+                                               #-Phys_Depre_1, 
+                                               -Exterior_W, 
+                                               -Acrage_1, 
+                                               -Phys_Depre, 
+                                               -Foundation, 
+                                               -Fixtures, 
+                                               #-sf_bsmt, 
+                                               -NbrhdAssr, 
+                                               -bedroomsun, 
+                                               #-Acrage, 
+                                               #-pct_tree, 
+                                               -BLdgGrade, 
+                                               -sf_Gross, 
+                                               -landcover, 
+                                               -rehabs_500, 
+                                               #-carryout_500, 
+                                               -bedroomsun_1, 
+                                               -halfbaths_1,
+                                               -halfbaths_12,
+                                               -halfbaths_13,
+                                               -halfbaths_14,
+                                               -baths_1, 
+                                               #-Dist_AntiAmenity, 
+                                               -Park_name_1, 
+                                               #-newhomes_500, 
+                                               -addition_500, 
+                                               -landcover, 
+                                               -effyearbui_1,
+                                               -Pasture,
+                                               -NumofUnits_1,
+                                               #-LocationZi,
+                                               #-CouncilDis,
+                                               -CensusBloc,
+                                               -Neighborho,
+                                               #-Acrage,
+                                               #-Story_Heig,
+                                               -roomsunits,
+                                               #-sf_finishe,
+                                               -sf_bsmt,
+                                               #-sf_bsmt_fi,
+                                               -sf_sketche,
+                                               -Zone_Asses,
+                                               -shootings,
+                                               #-dist_dumping,
+                                               #-dist_hwyext,
+                                               #-bars_500,
+                                               #-carryout_500,
+                                               #-rentals_1000,
+                                               -Bldg_Type,
+                                               #-Frame_1,
+                                               #-Phys_Depre_1,
+                                               #-Dist_BusLn,
+                                               #-Dist_BID,
+                                               -Dist_AntiAmenity,
+                                               #-Dist_Amenity,
+                                               #-school_dis,
+                                               -pct_vacnt,
+                                               -pct_renter,
+                                               #-pct_white,
+                                               -Forest,
+                                               -Dev_Open,
+                                               -Dev_Med,
+                                               -Dev_Low,
+                                               -Dev_High,
+                                               -Built_before_1920,
+                                               -Built_1921_1950,
+                                               #-Built_1951_1960,
+                                               #-Built_1961_1970,
+                                               #-Built_1971_1980,
+                                               #-Built_1981_1990,
+                                               #-Built_1991_2000,
+                                               #-Built_2001_2010,
+                                               #-Built_2011_2018,
+                                               -Avg_Price_3))
+                                               #-avg_Price_5,
+                                               #-fit.cluster))
+                                               
+                                               summary(regB)
+                                               
+```
+
+```{r include=FALSE}
+      dfTrain <- df1[ trainIndex,]
+      dfTest  <- df1[-trainIndex,]
+      library(leaflet)
+      library(tidyverse)
+                                               
+                                dfPredict<- as.data.frame(predict(regB, (df1)))
+                                               
+                                names(dfPredict) <- c("SalePrice")
+                                               
+                                #plot(df1$SalePrice,dfPredict$SalePrice)
+```
+```{r echo=FALSE}
+scatter1 <- ggplot(regResiduals, aes(log(SalePrice), log(fitted_values))) + geom_point(data = regResiduals, aes(x=log(SalePrice), y=log(fitted_values)),alpha=0.75, color="dark grey", shape= 16, size=0.1,
+                                                           inherit.aes = FALSE)   + theme_minimal()
+
+scatter1 +
+  stat_binhex(aes(x=log(SalePrice), y=log(fitted_values), alpha=..count..),na.rm=TRUE, fill="magenta") + ggtitle("") + labs(x="Log of Observed Sale Prices",y="Log of Predicted Sale Prices")
+
+```
+######IV.e. RESULTS: Residuals Map for 25% of Test Set & Moran's test
+```{r echo=FALSE}
+ggplot() + 
+  geom_sf(data=zipMap, aes(), fill=NA, colour="dark grey", size=.5) +
+  geom_point(data=residTest, 
+             aes(longitude,latitude, color=factor(ntile(residuals,5))),size=1) +
+  
+  scale_colour_manual(values = c("#edf8fb","#b3cde3","#8c96c6","#8856a7","#810f7c"),
+                      labels=as.character(quantile(residTest$residuals,
+                                                   c(.1,.2,.4,.6,.8),na.rm=T)),
+                      name="Test Set Residuals \n(Quintile Breaks)") +
+  mapTheme()
+
+residTest  <- regResiduals[-trainIndex,]
+
+library(spdep)
+coords <- cbind(residTest$longitude, residTest$latitude)
+spatialWeights <- knn2nb(knearneigh(coords, 4))
+moran.test(residTest$residuals, nb2listw(spatialWeights, style="W"))
+```
+
+######IV.f. RESULTS: Predicted Values of the Entire Dataset
+```{r echo=FALSE}
+ggplot() + 
+  geom_sf(data=zipMap, aes(), fill=NA, colour="dark grey", size=.5) +
+  geom_point(data=regResiduals, 
+             aes(longitude,latitude, color=factor(ntile(MAPE,5))),size=1) +
+  
+  scale_colour_manual(values = c("#edf8fb","#b3cde3","#8c96c6","#8856a7","#810f7c"),
+                      labels=as.character(quantile(regResiduals$MAPE,
+                                                   c(.1,.2,.4,.6,.8),na.rm=T)),
+                      name="MAPE \n(Quintile Breaks)") +
+  mapTheme()
+```
+
+```{r include=FALSE}
+
+zipMap <- st_read("geo_export_0016819c-006a-4efa-8fa6-a6c33e4f7d4a.shp")
+
+st_transform(zipMap,"+no_defs +datum=WGS84 +proj=longlat")
+
+regResiduals <- 
+  data.frame(residuals = (regB$residuals),
+             fitted_values = (regB$fitted.values),
+             SalePrice = df1 %>% select(SalePrice),
+             Longitude = df1 %>% select(longitude),
+             Latitude = df1 %>% select(latitude),
+             Name = df1 %>% select(LocationZi),
+             Legend = "reg")
+
+regResiduals$LocationZi <- as.factor(regResiduals$LocationZi)
+
+regResiduals$MAPE <- (abs((regResiduals$fitted_values) - regResiduals$SalePrice) / regResiduals$SalePrice)
+
+regResiduals$MAE <- abs((regResiduals$fitted_values)-regResiduals$SalePrice)
+
+
+residTest  <- regResiduals[-trainIndex,]
+
+
+regResiduals_Summary <-
+  regResiduals %>%
+  group_by(LocationZi) %>%
+  summarize(meanResidual = mean(residuals, na.rm=TRUE),
+            sdResidual = sd(residuals, na.rm=TRUE),
+            meanSales = mean(SalePrice),
+            f_v = mean(fitted_values),
+            MAPE = mean(MAPE),
+            countSales = n()) %>%
+  mutate(Legend="reg") %>%
+  filter(countSales > 5) %>%
+  left_join(zipMap, by = c("LocationZi"="zip")) %>%
+  st_sf()
+
+
+m <- leaflet() %>% setView(lng = -86.774832, lat = 36.165074, zoom = 10) %>% 
+  addProviderTiles(providers$Stamen.Toner) %>% 
+  addPolygons(data=zipMap, weight = 2, fillOpacity = 0.1, color = "blue")
+
+
+predicted_plot <- 
+  data.frame(fitted_values = (dfPredictAll),
+             SalePrice = df %>% select(SalePrice),
+             Longitude = df %>% select(longitude),
+             Latitude = df %>% select(latitude),
+             Name = df %>% select(LocationZi),
+             Legend = "reg")
+
+```
+
+######IV.g. RESULTS: Mean absolute percentage error (MAPE) by zip code
+```{r echo=FALSE}
+ggplot() + 
+  geom_sf(data=zipMap, aes(), fill=NA, colour="black", size=1) +
+  geom_sf(data=regResiduals_Summary, aes(fill=MAPE*meanSales), colour="black") +
+  mapTheme()
+```
+
+
+#####V. DISCUSSION
+The major flaw in our model is that it fails at predicting the most expensive sale prices. The low accuracy of predictions in higher price areas are the result of either not adequately capturing or omitting variables. 
+The most impactful interior characteristic was gross squarefootage, but amenity and neighborhood characteristics generally had a greater impact to the model accuracy than internal characteristics, which supports our hypothesis that urban buyers are motivated by proximity to amenities.  
+We divided to avoid collinearity (assumption: overloading the model with variables might cause muddling of predictions). However, after discussion with other groups about their results and approach, it appears that nearest 3, 5, and 10 neighbors all could've been input to the model to improve accuracy. 
+
+
+#####VI. CONCLUSION
+We would not recommend this model to Zillow. This was a difficult project but we learned a lot and with more time, could drastically improve our predicting power with just the lessons learned in the last two weeks. In the future, we could focus on creating dummy variables that divide variables to capture qualitative differences, for example, the number of stories isn’t as significant as homes that have 3 stories. Chopping up data, like effective year built would improve accuracy of predictions. Another improvement that would directly impact the predictions for higher prices is the spatial autocorrelation variable. 
+For this particular project, we assumed that variables were the same globally, throughout the entire city. In future, using other types of regression (rather than OLS) would likely yield a better model.
+
+
