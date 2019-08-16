@@ -1,0 +1,568 @@
+---
+title: 'Urban Growth Modeling for Metropolitan San Antonio \nAttn: Metro San Antonio
+  Planning Organization'
+author: "TREP_ACA"
+date: "5/1/2019"
+output:
+  html_document: 
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    toc_depth: 3
+    # fig_width: 5
+    # fig_height: 6
+    fig_caption: true
+  pdf_document: default
+---
+
+```{r setup, echo=FALSE, include=FALSE, cache = FALSE}
+knitr::opts_chunk$set(warning = FALSE, echo = FALSE)
+load("C:/Users/alexc/Box/CPLN_Final19/graphics_only.RData")
+
+#setwd("~/Box/CPLN_Final19")
+
+library(tidyverse)
+library(sf)
+library(raster)
+library(knitr)
+library(kableExtra)
+library(tidycensus)
+library(tigris)
+library(FNN)
+library(QuantPsyc)
+library(caret)
+library(yardstick)
+library(pscl)
+library(plotROC)
+library(ggrepel)
+library(pROC)
+library(grid)
+library(rmarkdown)
+library(gridExtra)
+library(viridis)
+library(pander)
+
+mapTheme <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 14,colour = "black"),
+    plot.subtitle=element_text(face="italic"),
+    plot.caption=element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2)
+  )
+}
+
+plotTheme <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 14,colour = "black"),
+    plot.subtitle = element_text(face="italic"),
+    plot.caption = element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),
+    panel.grid.major = element_line("grey80", size = 0.1),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2),
+    strip.background = element_rect(fill = "grey80", color = "white"),
+    strip.text = element_text(size=12),
+    axis.title = element_text(size=12),
+    axis.text = element_text(size=10),
+    plot.background = element_blank(),
+    legend.background = element_blank(),
+    legend.title = element_text(colour = "black", face = "italic"),
+    legend.text = element_text(colour = "black", face = "italic"),
+    strip.text.x = element_text(size = 14)
+  )
+}
+
+palette2 <- c("#41b6c4","#253494")
+palette4 <- c("#a1dab4","#41b6c4","#2c7fb8","#253494")
+palette5 <- c("#ffffcc","#a1dab4","#41b6c4","#2c7fb8","#253494")
+palette10 <- c("#f7fcf0","#e0f3db","#ccebc5","#a8ddb5","#7bccc4",
+               "#4eb3d3","#2b8cbe","#0868ac","#084081","#f7fcf0")
+
+
+#this function converts a column in to quintiles. It is used for mapping.
+quintileBreaks <- function(df,variable) {
+  as.character(quantile(df[[variable]],
+                        c(.01,.2,.4,.6,.8),na.rm=T))
+}
+
+#This function can be used to convert a polygon sf to centroids xy coords.
+xyC <- function(aPolygonSF) {
+  as.data.frame(
+    cbind(x=st_coordinates(st_centroid(aPolygonSF))[,1],
+          y=st_coordinates(st_centroid(aPolygonSF))[,2]))
+}
+
+#this function convert a raster to a data frame so it can be plotted in ggplot
+rast <- function(inRaster) {
+  data.frame(
+    xyFromCell(inRaster, 1:ncell(inRaster)),
+    value = getValues(inRaster)) }
+
+
+#this function convert a raster to a data frame so it can be plotted in ggplot
+rast <- function(inRaster) {
+  data.frame(
+    xyFromCell(inRaster, 1:ncell(inRaster)), 
+    value = getValues(inRaster)) }
+
+aggregateRaster <- function(inputRasterList, theFishnet) {
+  #create an empty fishnet with the same dimensions as the input fishnet
+  theseFishnets <- theFishnet %>% dplyr::select()
+  #for each raster in the raster list
+  for (i in inputRasterList) {
+    #create a variable name corresponding to the ith raster
+    varName <- names(i)
+    #convert raster to points as an sf
+    thesePoints <-
+      rasterToPoints(i) %>%
+      as.data.frame() %>%
+      st_as_sf(coords = c("x", "y"), crs = st_crs(theFishnet)) %>%
+      filter(.[[1]] == 1)
+    #aggregate to the fishnet
+    thisFishnet <-
+      aggregate(thesePoints, theFishnet, length) %>%
+      mutate(!!varName := ifelse(is.na(.[[1]]),0,1))
+    #add to the larger fishnet
+    theseFishnets <- cbind(theseFishnets,thisFishnet)
+  }
+  #output all aggregates as one large fishnet
+  return(theseFishnets)
+}
+
+interpolate <- function(dataframe, varString, fishnet, booleanTRUEFALSE){
+  st_interpolate_aw(dataframe[varString],fishnet, extensive=booleanTRUEFALSE) %>% as.data.frame(.) %>%
+       #st_set_geometry(NULL) %>%
+       dplyr::select(-Group.1, -geometry)
+}
+
+nn_function <- function(measureFrom,measureTo,k) {
+  #convert the sf layers to matrices
+  measureFrom_Matrix <-
+    as.matrix(measureFrom)
+  measureTo_Matrix <-
+    as.matrix(measureTo)
+  nn <-   
+    get.knnx(measureTo, measureFrom, k)$nn.dist
+  output <-
+    as.data.frame(nn) %>%
+    rownames_to_column(var = "thisPoint") %>%
+    gather(points, point_distance, V1:ncol(.)) %>%
+    arrange(as.numeric(thisPoint)) %>%
+    group_by(thisPoint) %>%
+    summarize(pointDistance = mean(point_distance)) %>%
+    arrange(as.numeric(thisPoint)) %>% 
+    dplyr::select(-thisPoint) %>%
+    pull()
+  
+  return(output)  
+}
+
+
+spatialCV <- function(dataFrame, uniqueID, dependentVariable, modelName) {
+  
+  #initialize a data frame 
+  endList <- list()
+  
+  #create a list that is all the spatial group unqiue ids in the data frame (ie counties)    
+  uniqueID_List <- unique(dataFrame[[uniqueID]])  
+  x <- 1
+  y <- length(uniqueID_List)
+  
+  #create a counter and while it is less than the number of counties...  
+  while(x <= y) 
+  {
+    #call a current county    
+    currentUniqueID <- uniqueID_List[x]
+    #create a training set comprised of units not in that county and a test set of units
+    #that are that county
+    training <- dataFrame[ which(dataFrame[[uniqueID]] != uniqueID_List[x]),]
+    testing <- dataFrame[ which(dataFrame[[uniqueID]] == uniqueID_List[x]),]
+    #create seperate xy vectors
+    trainingX <- training[ , -which(names(training) %in% c(dependentVariable))]
+    testingX <- testing[ , -which(names(testing) %in% c(dependentVariable))]
+    
+    trainY <- training[[dependentVariable]]
+    testY <- testing[[dependentVariable]]
+    #Calculate predictions on the test county as part of a data frame including the observed
+    #outcome and the unique county ID    
+    thisPrediction <- 
+      data.frame(class = testY,
+                 probs = predict(modelName, testingX, type="response"),
+                 county = currentUniqueID) 
+    
+    #Row bind the predictions to a data farme
+    endList <- rbind(endList, thisPrediction)
+    #iterate counter    
+    x <- x + 1 
+  } 
+  #return the final list of counties and associated predictions  
+  return (as.data.frame(endList))
+}
+```
+
+## Table of contents
+1. [INTRODUCTION](#introduction)
+2. [DATA WRANGLING & EXPLORATORY ANALYSIS](#paragraph1)
+    1. [The Fishnet](#subparagraph1) 
+    2. [Land Cover](#subparagraph2)
+    3. [Population](#subparagraph3)
+    4. [Existing Development](#subparagraph4)
+    5. [Access](#subparagraph5)
+3. [Modeling Technique](#paragraph2)
+4. [Findings & Recommendations](#paragraph3)
+5. [Appendix](#appendix)
+
+```{r list_of_all_plots, eval = FALSE}
+
+#county_specific_allocation_metrics_all_plot
+#development_demand_predicted_probabilities
+#development_predictions_both_thresholds
+#Distance_to_highways_as_fishnet_centroids
+#fishnet_simple_3000_ft_resolution_map
+#mcfadden_rsquared_by_model_bar_chart
+#populations_in_2000_and_2010_side_by_side
+#wilson_county_development_potential_and_projected_population_2020_side_by_side
+#spatial_lag_to_2001_development_as_fishnet_centroids
+#study_area_counties
+#sensitive_lands_lost_2001_2011
+#pop_chg_by_county
+#highways_and_new_development
+#land_cover_2001
+#land_cover_2001_2011_side_by_side
+#Land_Cover_Change_2000_2010_map
+#land_cover_development_change_as_fishnet_centroids
+#land_cover_types_2001_as_fishnet_centroids
+#land_cover_types_2011_as_fishnet_centroids
+#continuous_areas_of_either_wetlands_or_forests_greater_than_1_acre
+```
+
+## INTRODUCTION <a name="introduction"></a>
+This markdown details a sprawl modeling case study in Greater San Antonio through logistic regression. It outlines a method by which demand and supply for development can be predicted, enabling planners to better direct new development to suitable areas. The method presented here can be applied to diverse contexts in different cities. Better modeling of sprawl will inform efficient and smart growth, leading to better public expenditure, supply and demand, land use, traffic volume, public welfare, and environmental problems and protection.
+
+```{r DataWrangling_and_FeatureEngineering, echo=FALSE, eval = FALSE}
+MSA <- 
+  st_read("~/Box/CPLN_Final19/Mask/Masksepcnty_Dissolve.shp") %>%
+  st_transform(102740)
+
+lc_change = raster("~/Box/CPLN_Final19/LC_Data/MSA/tifs/chgclp-prj.tif")
+
+ggplot() +
+  geom_sf(data=MSA) +
+  geom_raster(data=rast(lc_change) %>% na.omit %>% filter(value > 0), 
+              aes(x,y,fill=as.factor(value))) +
+  scale_fill_viridis(direction = -1, discrete=TRUE, name ="Land Cover\nChange") +
+  labs(title = "Land Cover Change") +
+  mapTheme()
+
+reclassMatrix <- 
+  matrix(c(
+    0,12,0,
+    12,24,1,
+    24,Inf,0),
+    ncol=3, byrow=T)
+
+reclassMatrix
+
+lc_change2 <- 
+  reclassify(lc_change,reclassMatrix)
+
+lc_change2[lc_change2 < 1] <- NA
+
+names(lc_change2) <- "lc_change"
+
+ggplot() +
+  geom_sf(data=MSA) +
+  geom_raster(data=rast(lc_change2) %>% na.omit, 
+              aes(x,y,fill=as.factor(value))) +
+  scale_fill_viridis(discrete=TRUE, name ="Land Cover\nChange") + 
+  labs(title="Development land use change") +
+  mapTheme()
+
+MSA_fishnet <- 
+  st_make_grid(MSA, 3000) %>%
+  st_sf()
+
+MSA_fishnet <-
+  st_intersection(MSA_fishnet, MSA)
+
+#REALLY SLOW DON"T RUN
+ggplot() +
+  geom_sf(data=MSA_fishnet) +
+  labs(title="Fishnet, 3000 foot resolution") +
+  mapTheme()
+changePoints <-
+  rasterToPoints(lc_change2) %>%
+  as.data.frame() %>%
+  st_as_sf(coords = c("x", "y"), crs = st_crs(MSA_fishnet))
+
+fishnet <- 
+  aggregate(changePoints, MSA_fishnet, sum) %>%
+  mutate(lc_change = ifelse(is.na(lc_change),0,1),
+         lc_change = as.factor(lc_change))
+
+ggplot() +
+  geom_sf(data=MSA) +
+  geom_point(data=fishnet, 
+             aes(x=xyC(fishnet)$x, y=xyC(fishnet)$y, colour=lc_change)) +
+  scale_colour_manual(values = palette2,
+                      labels=c("No Change","New Development"),
+                      name = "") +
+  labs(title = "Land cover development change", subtitle = "As fishnet centroids") +
+  mapTheme()
+
+
+
+lc_2001 = raster("~/Box/CPLN_Final19/LC_Data/MSA/tifs/2001lc-prj.tif")
+
+ggplot() +
+  geom_sf(data=MSA) +
+  geom_raster(data=rast(lc_2001) %>% na.omit %>% filter(value > 0), 
+              aes(x,y,fill=as.factor(value))) +
+  scale_fill_viridis(discrete=TRUE, name ="") +
+  labs(title = "Land Cover, 2001") +
+  mapTheme()
+
+
+developed <- lc_2001 == 21 | lc_2001 == 22 | lc_2001 == 23 | lc_2001 == 24
+forest <- lc_2001 == 41 | lc_2001 == 42 | lc_2001 == 43 
+farm <- lc_2001 == 81 | lc_2001 == 82 
+wetlands <- lc_2001 == 90 | lc_2001 == 95 
+otherUndeveloped <- lc_2001 == 52 | lc_2001 == 71 | lc_2001 == 31 
+water <- lc_2001 == 11
+
+names(developed) <- "developed"
+names(forest) <- "forest"
+names(farm) <- "farm"
+names(wetlands) <- "wetlands"
+names(otherUndeveloped) <- "otherUndeveloped"
+names(water) <- "water"
+
+
+
+aggregateRaster <- function(inputRasterList, theFishnet) {
+  #create an empty fishnet with the same dimensions as the input fishnet
+  theseFishnets <- theFishnet %>% dplyr::select()
+  #for each raster in the raster list
+  for (i in inputRasterList) {
+    #create a variable name corresponding to the ith raster
+    varName <- names(i)
+    #convert raster to points as an sf
+    thesePoints <-
+      rasterToPoints(i) %>%
+      as.data.frame() %>%
+      st_as_sf(coords = c("x", "y"), crs = st_crs(theFishnet)) %>%
+      filter(.[[1]] == 1)
+    #aggregate to the fishnet
+    thisFishnet <-
+      aggregate(thesePoints, theFishnet, length) %>%
+      mutate(!!varName := ifelse(is.na(.[[1]]),0,1))
+    #add to the larger fishnet
+    theseFishnets <- cbind(theseFishnets,thisFishnet)
+  }
+  #output all aggregates as one large fishnet
+  return(theseFishnets)
+}
+
+
+theRasterList <- c(developed,forest,farm,wetlands,otherUndeveloped,water)
+
+aggregatedRasters <-
+  aggregateRaster(theRasterList, MSA_fishnet) %>%
+  dplyr::select(developed,forest,farm,wetlands,otherUndeveloped,water) %>%
+  mutate_if(is.numeric,as.factor)
+
+aggregatedRasters %>%
+  gather(var,value,developed:water) %>%
+  mutate(X = xyC(.)$x,
+         Y = xyC(.)$y) %>%
+  ggplot() +
+  geom_sf(data=MSA) +
+  geom_point(aes(X,Y, colour=as.factor(value))) +
+  facet_wrap(~var) +
+  scale_colour_manual(values = palette2,
+                      labels=c("Other","Land Cover"),
+                      name = "") +
+  labs(title = "Land cover types, 2001",
+       subtitle = "As fishnet centroids") +
+  mapTheme()
+
+
+
+
+#API
+#UPDATE w/ New KEY!
+census_api_key("6255b4b057c1b0eef7ee29ccda67255343d6cdde", overwrite = TRUE)
+
+
+```
+
+**People in the United States have been moving to the periphery of urban areas for 200 years [^1][^2].**  
+Greater San Antonio is currently seeing immense development pressure which is likely to take form as sprawl in formerly undeveloped areas. 
+
+```{r echo= FALSE}
+study_area_counties
+```
+
+_Greater San Antonio, or the Metropolitan San Antonio Area (MSA), is comprised of eight counties._
+
+It is clear that sprawl is happening. It is also clear that sprawl can be detrimental if not strategic.  Some undeveloped areas are environmentally sensitive, such as forests and wetlands, while others, like farmland, would benefit from development. A growth modeling approach is needed to steer new development into the areas best suited to accommodate it. 
+
+To model sprawl, we use binomial logistic regression to predict which areas have the highest development demand, and overlay this demand on classifications of sensitive land use areas to find good candidates for development.  This top-down approach is scalable, generalizable, and empirically based on past local experience of development. The consequences are significant: below is a map of sensitive lands lost to development between 2000 and 2010.
+
+```{r echo= FALSE}
+sensitive_lands_lost_2001_2011
+```
+
+
+
+## DATA WRANGLING & EXPLORATORY ANALYSIS <a name="paragraph1"></a>
+**How does this exercise support the next large-scale comprehensive planning process?**
+The complex interplay of stakeholders with often competing or conflicting interests (developers, homeowners, planners, etc) make top-down modeling an appropriate approach, due to mathematical objectivity and relatively neutral outcomes. This top-down modeling approach begins with the outcome or big picture: Sprawl and attempts to break the problem into component pieces. The model coefficients assign significance to each of the components of the sprawl problem. 
+
+As a step to better understanding the underlying process, we predict developement in landcover change between 2001 and 2011. Then, we project forward to 2020 and anticipate the San Antonio metro region’s most likely development areas.
+
+The knowledge generated from the model can be used to identify suitable access points for planning intervention, forecast likely future trends, and demonstrate expected spatial impacts. This model can also contribute to a strategic planning approach via an allocation procedure. 
+
+### The Fishnet <a name="subparagraph1></a>
+
+The metro area is divided into a grid of cells called a vector fishnet, and these cells are the unit of analysis (3000 foot x 3000 foot resolution) and will allow parameterization of spatial relationships in the regression model. This unit of analysis is determined based on a combination of computational capacity and the resolution of available data. 
+
+```{r echo= FALSE}
+fishnet_simple_3000_ft_resolution_map
+```
+
+Some context for Greater San Antonio's sprawl analysis is provided in the following charts and maps of key development demand variables. 
+
+### Land cover <a name="subparagraph2"></a>
+2001 to 2011 land cover change is the dependent variable our regression model will forecast. We downloaded land cover data from the Multi-Resolution Land Characteristics Consortium’s National Land Cover Database (NLCD).
+
+```{r Datawrangling_visualizations_Landcover, echo= FALSE}
+land_cover_2001_2011_side_by_side
+
+Land_Cover_Change_2000_2010_map
+```
+
+To begin spatially organizing our data, the land cover and land cover change data is integrated with the vector fishnet. 
+
+```{r echo= FALSE}
+land_cover_types_2001_as_fishnet_centroids
+land_cover_types_2011_as_fishnet_centroids
+
+land_cover_development_change_as_fishnet_centroids
+```
+
+### Population <a name="subparagraph3"></a>
+To capture demand-side components impacting sprawl, we extract population and population change information from 2000 and 2010 Census data. 
+
+```{r Datawrangling_visualizations_Census, echo= FALSE}
+populations_in_2000_and_2010_side_by_side <-(grid.arrange(population_in_2000,population_in_2010, ncol=2))
+```
+
+Population change indicates change between 2010 and 2020. This data is also joined to the fishnet. 
+
+```{r}
+pop_chg_by_county
+```
+
+### Existing Development <a name="subparagraph4"></a>
+Distance to existing development is a key development predictor and is joined to the fishnet. 
+
+```{r Datawrangling_visualizations_SpatialLag, echo= FALSE}
+spatial_lag_to_2001_development_as_fishnet_centroids
+```
+
+### Access <a name="subparagraph5"></a>
+Distance to highways is a key development predictor and is joined to the fishnet. 
+
+```{r Datawrangling_visualizations_HWY, echo= FALSE}
+Distance_to_highways_as_fishnet_centroids
+```
+
+Footnote:  [^1]Bruegmann, R. (2005). Sprawl: A compact history. Chicago, University of Chicago Press. [^2]Hayden, D. (2003). Building Suburbia: Green Fields and Urban Growth, 1820-2000. New York, Vintage Books. 
+
+
+
+## MODELING TECHNIQUE <a name="paragraph2"></a>
+To predict development demand, we model likelihood of development from 2001 to 2010 as a function of several variables related to key predictors listed above. This model is applied to the years 2010-2020. Models were tested with a combination of variables including proximity to nearest highways, several demographic variables from the decennial census, such as average household and family sizes, median ages, and total population, and proximity to existing development. The most expansive model performed best and was ultimately chosen although a comparison can be found in the appendix.   
+
+Our model of development from 2001-2010 produces predictions of probability of development ranging from 0 to 1 for each fishnet cell. A threshold percentage is set, and any cell higher likelihood of development than the threshold is predicted to develop, while cells with lower percentages are predicted not to.  The differences in predictions from differing thresholds can be seen in the maps below.
+
+```{r echo= FALSE}
+development_predictions_both_thresholds
+```
+
+These predictions are then cross-validated using regular and leave-one-group-out cross-validation, to ensure that the model's predictive power is comparable in each county and predicts with equal accuracy throughout the metro area. 
+
+Classification of NLDC’s land cover data into suitable (e.g. farmland) and unsuitable (e.g. forest, wetland) supports our calculations of the supply of developable land. 
+
+```{r echo= FALSE}
+continuous_areas_of_either_wetlands_or_forests_greater_than_1_acre
+```
+
+
+
+## FINDINGS & RECOMMENDATIONS <a name="paragraph3"></a>
+Two different thresholds of 5% and 17% are explored:
+
+Variable	   | Sensitivity	| Specificity	| Accuracy
+-------------|--------------|-------------|-----------
+predClass_05 |	0.67        |	0.92        |	0.92
+predClass_17 |	0.20	      | 0.99	      | 0.98
+
+_Specificity in our model is the percentage of No Change areas that were correctly predicted as No change._
+_The Sensitivity in our model is the percentage of developed areas actually predicted as such._ 
+
+```{r}
+development_predictions_both_thresholds
+```
+
+We evaluate our final development demnand model on accuracy and generalizability. Our model performs with 98% accuracy. Sensitivity and specificity are 20% and 99% respectively, indicating that our model is better at predicting areas of no development demand than of high development demand. This makes intuitive sense as development is a rarer and harder to predict event than the alternative: continuation of the status quo.  
+
+The county-by-county level model statistics speak to the generalizability of the model across space. Our study area contains many counties that experienced little growth. Bexar county has both the greatest Sensitivity level and the most of the development. 
+
+```{r}
+Sens_spec_acc_obsChg_by_county <-
+  spatialCV_metrics %>%
+    kable() %>%
+    kable_styling(full_width = F)
+```
+
+When the model is applied to 2010 data to predict 2020 development, the results can be seen below.  The impact of proximity to highways can be clearly seen in this pattern.
+
+```{r echo= FALSE}
+development_demand_predicted_probabilities
+```
+
+Statistics for development demand and developable and undevelopable land supply are displayed below by county.
+
+```{r echo= FALSE}
+county_specific_allocation_metrics_all_plot
+```
+
+We recommend that development be steered to Wilson County, which has both a high supply of developable land and a fairly high demand for development (although Atascosa and Guadalupe counties would likely also be good candidates for development).  
+
+```{r}
+wilson_county_development_potential_and_projected_population_2020_side_by_side <-
+  grid.arrange(wilson_county_development_potential_2020,wilson_county_projected_population_2020, ncol=2)
+```
+
+Efficient development and transportation infrastructure can have widespread impacts, such as on climate change. Research and evidence-supported decision-making is best for complex urban environments. 
+
+## APPENDIX  <a name="appendix"></a>
+Comparison of Models: 
+
+```{r}
+mcfadden_rsquared_by_model_bar_chart
+```
+
+
