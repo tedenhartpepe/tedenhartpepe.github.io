@@ -65,7 +65,7 @@ library(yaml)
 library(knitr)
 library(SuperLearner)
 
-register_google(key = " AIzaSyDOEn1n9G3KKJewWJBmjbVtkpMAsFNEqKY ")
+register_google(key = " # ")
 ```
 
 ```{r setup, echo=FALSE}
