@@ -14,8 +14,8 @@
 		@include vendor('justify-content', 'flex-end');
 		@include vendor('pointer-events', 'none');
 		@include vendor('user-select', 'none');
-		height: 2rem;
-		padding-bottom: (_size(padding) * 2);
+		height: 20rem;
+		padding-bottom: (_size(padding) * 4);
 		position: relative;
 		text-align: center;
 		z-index: 2;
@@ -24,9 +24,9 @@
 			@include vendor('transition', (
 				'border-color #{_duration(transition)} ease-in-out',
 				'color #{_duration(transition)} ease-in-out',
-				'opacity 5s ease',
-				'transform 5s ease',
-				'visibility 5s'
+				'opacity 0.5s ease',
+				'transform 0.5s ease',
+				'visibility 0.5s'
 			));
 			@include vendor('pointer-events', 'auto');
 			border-style: solid;
